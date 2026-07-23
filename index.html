@@ -278,8 +278,6 @@
     padding:10px 12px;
   }
   .field textarea{min-height:90px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;resize:vertical;}
-  .field-row{display:flex;gap:12px;flex-wrap:wrap;}
-  .field-row .field{flex:1;min-width:140px;}
   button.primary-btn{
     font-family:'IBM Plex Mono',monospace;
     font-size:12.5px;
@@ -471,33 +469,7 @@
       <h2>Ajouter une partie</h2>
       <div class="field">
         <label for="in-pgn">PGN</label>
-        <textarea id="in-pgn" placeholder="Collez ici le PGN complet de la partie (avec ou sans les en-têtes [Event] [White] [Black]...)"></textarea>
-      </div>
-      <div class="field-row">
-        <div class="field">
-          <label for="in-opponent">Adversaire</label>
-          <input type="text" id="in-opponent" placeholder="Pseudo Chess.com">
-        </div>
-        <div class="field">
-          <label for="in-date">Date</label>
-          <input type="date" id="in-date">
-        </div>
-        <div class="field">
-          <label for="in-result">Résultat</label>
-          <select id="in-result">
-            <option value="win">Victoire</option>
-            <option value="loss">Défaite</option>
-            <option value="draw">Nulle</option>
-          </select>
-        </div>
-      </div>
-      <div class="field">
-        <label for="in-opening">Ouverture jouée (optionnel)</label>
-        <input type="text" id="in-opening" placeholder="ex. Défense française, Gambit Dame refusé...">
-      </div>
-      <div class="field">
-        <label for="in-note">Note personnelle (optionnel)</label>
-        <textarea id="in-note" style="font-family:'Inter',sans-serif;font-size:14px;min-height:60px;" placeholder="Ce que j'ai appris, une erreur à ne pas refaire..."></textarea>
+        <textarea id="in-pgn" placeholder="Collez ici le PGN complet exporté depuis Chess.com — adversaire, date et résultat sont détectés automatiquement."></textarea>
       </div>
       <button class="primary-btn" id="add-game-btn">Ajouter au journal</button>
       <div class="form-msg" id="form-msg"></div>
@@ -879,30 +851,56 @@
     renderGameList(games);
   }
 
+  /* Le pseudo du titulaire du carnet, tel qu'il apparaît dans les PGN Chess.com */
+  const MY_USERNAME = 'fioriture';
+
   document.getElementById('add-game-btn').addEventListener('click', async () => {
     const msg = document.getElementById('form-msg');
     msg.className = 'form-msg';
     const pgn = document.getElementById('in-pgn').value.trim();
-    const opponent = document.getElementById('in-opponent').value.trim();
-    const played_on = document.getElementById('in-date').value || null;
-    const result = document.getElementById('in-result').value;
-    const opening = document.getElementById('in-opening').value.trim();
-    const note = document.getElementById('in-note').value.trim();
 
     if(!pgn){
       msg.textContent = 'Collez d\'abord le PGN de la partie.';
       msg.classList.add('err');
       return;
     }
-    try{
-      const test = new Chess();
-      if(!test.load_pgn(pgn)){
-        msg.textContent = 'Ce PGN n\'a pas pu être lu. Vérifiez qu\'il est complet et bien formaté.';
-        msg.classList.add('err');
-        return;
-      }
-    }catch(e){
+
+    const chess = new Chess();
+    let loaded = false;
+    try{ loaded = chess.load_pgn(pgn); }catch(e){ loaded = false; }
+    if(!loaded){
       msg.textContent = 'Ce PGN n\'a pas pu être lu. Vérifiez qu\'il est complet et bien formaté.';
+      msg.classList.add('err');
+      return;
+    }
+
+    const h = chess.header();
+    const white = (h.White || '').toLowerCase();
+    const black = (h.Black || '').toLowerCase();
+    const me = MY_USERNAME.toLowerCase();
+
+    let opponent = null;
+    if(white === me) opponent = h.Black || null;
+    else if(black === me) opponent = h.White || null;
+
+    if(!opponent){
+      msg.textContent = `Impossible de trouver "${MY_USERNAME}" dans les balises [White]/[Black] de ce PGN.`;
+      msg.classList.add('err');
+      return;
+    }
+
+    let played_on = null;
+    if(h.Date && /^\d{4}\.\d{2}\.\d{2}/.test(h.Date)){
+      played_on = h.Date.slice(0, 10).replace(/\./g, '-');
+    }
+
+    let result = null;
+    if(h.Result === '1-0') result = white === me ? 'win' : 'loss';
+    else if(h.Result === '0-1') result = white === me ? 'loss' : 'win';
+    else if(h.Result === '1/2-1/2') result = 'draw';
+
+    if(!result){
+      msg.textContent = 'La balise [Result] de ce PGN est absente ou non reconnue.';
       msg.classList.add('err');
       return;
     }
@@ -914,7 +912,7 @@
     }
 
     const { error } = await sb.from('games').insert({
-      pgn, opponent, played_on, result, opening, note
+      pgn, opponent, played_on, result
     });
 
     if(error){
@@ -923,45 +921,10 @@
       return;
     }
 
-    msg.textContent = 'Partie ajoutée au journal.';
+    msg.textContent = `Partie contre ${opponent} ajoutée au journal.`;
     msg.classList.add('ok');
     document.getElementById('in-pgn').value = '';
-    document.getElementById('in-opponent').value = '';
-    document.getElementById('in-date').value = '';
-    document.getElementById('in-opening').value = '';
-    document.getElementById('in-note').value = '';
     refreshGames();
-  });
-
-  /* Auto-remplissage best-effort depuis les en-têtes du PGN collé */
-  document.getElementById('in-pgn').addEventListener('blur', () => {
-    const pgn = document.getElementById('in-pgn').value.trim();
-    if(!pgn) return;
-    try{
-      const chess = new Chess();
-      if(!chess.load_pgn(pgn)) return;
-      const h = chess.header();
-      const me = 'fioriture';
-      const white = (h.White || '').toLowerCase();
-      const black = (h.Black || '').toLowerCase();
-      const oppField = document.getElementById('in-opponent');
-      const dateField = document.getElementById('in-date');
-      const resField = document.getElementById('in-result');
-
-      if(!oppField.value){
-        if(white === me.toLowerCase()) oppField.value = h.Black || '';
-        else if(black === me.toLowerCase()) oppField.value = h.White || '';
-      }
-      if(!dateField.value && h.Date && /\d{4}\.\d{2}\.\d{2}/.test(h.Date)){
-        dateField.value = h.Date.replace(/\./g, '-');
-      }
-      if(h.Result){
-        const iAmWhite = white === me.toLowerCase();
-        if(h.Result === '1-0') resField.value = iAmWhite ? 'win' : 'loss';
-        else if(h.Result === '0-1') resField.value = iAmWhite ? 'loss' : 'win';
-        else if(h.Result === '1/2-1/2') resField.value = 'draw';
-      }
-    }catch(e){ /* silencieux : auto-remplissage best-effort */ }
   });
 
   /* ---------- Initialisation ---------- */
