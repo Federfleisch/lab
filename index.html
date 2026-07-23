@@ -504,12 +504,17 @@
     }
   }
 
+  const chessReady = typeof Chess !== 'undefined';
+
   const banner = document.getElementById('sync-banner');
   if(!sbReady){
     banner.textContent = "⚠ Supabase non configuré : la sauvegarde et le journal de parties ne fonctionneront pas tant que SUPABASE_URL et SUPABASE_ANON_KEY ne sont pas renseignés dans le code.";
     banner.classList.add('show','err');
   } else if(!sb){
     banner.textContent = "⚠ Connexion à la base de données indisponible pour l'instant (réseau ?). Le carnet reste consultable, mais rien ne sera sauvegardé tant que la connexion n'est pas rétablie — rechargez la page.";
+    banner.classList.add('show','err');
+  } else if(!chessReady){
+    banner.textContent = "⚠ La bibliothèque d'échecs (chess.js) n'a pas pu être chargée (bloqueur de publicité, réseau ?). L'ajout et la lecture des parties ne fonctionneront pas tant qu'elle n'est pas chargée — rechargez la page.";
     banner.classList.add('show','err');
   }
 
@@ -809,9 +814,9 @@
       }
     });
 
-    const chess = new Chess();
     let history = [];
     try{
+      const chess = new Chess();
       chess.load_pgn(game.pgn);
       history = chess.history();
     }catch(e){
@@ -865,9 +870,19 @@
       return;
     }
 
-    const chess = new Chess();
-    let loaded = false;
-    try{ loaded = chess.load_pgn(pgn); }catch(e){ loaded = false; }
+    if(!chessReady){
+      msg.textContent = "La bibliothèque d'échecs (chess.js) n'est pas chargée — rechargez la page (vérifiez un éventuel bloqueur de publicité) puis réessayez.";
+      msg.classList.add('err');
+      return;
+    }
+
+    let chess, loaded = false;
+    try{
+      chess = new Chess();
+      loaded = chess.load_pgn(pgn);
+    }catch(e){
+      loaded = false;
+    }
     if(!loaded){
       msg.textContent = 'Ce PGN n\'a pas pu être lu. Vérifiez qu\'il est complet et bien formaté.';
       msg.classList.add('err');
