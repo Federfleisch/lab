@@ -851,8 +851,8 @@
     renderGameList(games);
   }
 
-  /* Le pseudo du titulaire du carnet, tel qu'il apparaît dans les PGN Chess.com */
-  const MY_USERNAME = 'fioriture';
+  /* Pseudos du titulaire du carnet tels qu'ils peuvent apparaître dans les PGN Chess.com */
+  const MY_USERNAMES = ['fi0riture', 'fioriture'];
 
   document.getElementById('add-game-btn').addEventListener('click', async () => {
     const msg = document.getElementById('form-msg');
@@ -877,14 +877,16 @@
     const h = chess.header();
     const white = (h.White || '').toLowerCase();
     const black = (h.Black || '').toLowerCase();
-    const me = MY_USERNAME.toLowerCase();
+    const mySet = MY_USERNAMES.map(u => u.toLowerCase());
+    const iAmWhite = mySet.includes(white);
+    const iAmBlack = mySet.includes(black);
 
     let opponent = null;
-    if(white === me) opponent = h.Black || null;
-    else if(black === me) opponent = h.White || null;
+    if(iAmWhite) opponent = h.Black || null;
+    else if(iAmBlack) opponent = h.White || null;
 
     if(!opponent){
-      msg.textContent = `Impossible de trouver "${MY_USERNAME}" dans les balises [White]/[Black] de ce PGN.`;
+      msg.textContent = `Impossible de trouver "${MY_USERNAMES.join('" ou "')}" dans les balises [White]/[Black] de ce PGN.`;
       msg.classList.add('err');
       return;
     }
@@ -895,8 +897,8 @@
     }
 
     let result = null;
-    if(h.Result === '1-0') result = white === me ? 'win' : 'loss';
-    else if(h.Result === '0-1') result = white === me ? 'loss' : 'win';
+    if(h.Result === '1-0') result = iAmWhite ? 'win' : 'loss';
+    else if(h.Result === '0-1') result = iAmWhite ? 'loss' : 'win';
     else if(h.Result === '1/2-1/2') result = 'draw';
 
     if(!result){
