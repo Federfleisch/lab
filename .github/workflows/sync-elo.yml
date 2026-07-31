@@ -1,0 +1,58 @@
+name: Sync Elo Chess.com
+
+on:
+  schedule:
+    - cron: "17 5 * * *"   # tous les jours ~05:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-elo
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Récupère le classement Chess.com
+        run: |
+          set -euo pipefail
+          stats="$(curl -sS --fail --retry 3 \
+            -H 'User-Agent: federfleisch/lab carnet-echecs (GitHub Actions)' \
+            'https://api.chess.com/pub/player/fi0riture/stats')"
+          rating="$(printf '%s' "$stats" | jq -r '
+            .chess_rapid.last.rating //
+            .chess_blitz.last.rating //
+            .chess_bullet.last.rating //
+            .chess_daily.last.rating // empty')"
+          format="$(printf '%s' "$stats" | jq -r '
+            if .chess_rapid.last.rating then "rapid"
+            elif .chess_blitz.last.rating then "blitz"
+            elif .chess_bullet.last.rating then "bullet"
+            elif .chess_daily.last.rating then "daily"
+            else "" end')"
+          if [ -z "$rating" ]; then
+            echo "Aucun classement trouvé, on ne modifie rien."
+            exit 0
+          fi
+          mkdir -p assets
+          printf '{\n  "rating": %s,\n  "format": "%s",\n  "updated": "%s"\n}\n' \
+            "$rating" "$format" "$(date -u +%FT%TZ)" > assets/elo.json
+          echo "Elo=$rating ($format)"
+
+      - name: Commit si changement
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- assets/elo.json; then
+            echo "Pas de changement."
+            exit 0
+          fi
+          git config user.name "elo-sync-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/elo.json
+          git commit -m "chore: sync Elo Chess.com"
+          git push

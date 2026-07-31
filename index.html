@@ -72,6 +72,10 @@
   }
   .delta svg{width:12px;height:12px;}
   .hcap{margin:14px 0 0;font-size:13px;line-height:1.5;color:var(--muted);max-width:44ch;}
+  .elo-sync{margin-top:9px;font-family:var(--mono);font-size:11px;color:var(--faint);letter-spacing:.03em;}
+  .delta[hidden]{display:none;}
+  .delta.win{color:var(--win);border-color:rgba(169,230,206,.4);}
+  .delta.loss{color:var(--loss);border-color:rgba(230,173,173,.4);}
 
   /* --- Bandeau de statut --- */
   .sync-banner{
@@ -250,10 +254,8 @@
 <div class="wrap">
 
   <header class="topbar">
-    <div class="av">f</div>
     <div class="greet">
       <b>Salut, fi0riture</b>
-      <span>échecs · rapide</span>
     </div>
     <div class="hbtns">
       <button class="icon-btn" aria-label="Notifications">
@@ -266,27 +268,25 @@
   </header>
 
   <section class="hero">
-    <div class="eyebrow">Estimation Elo</div>
+    <div class="eyebrow">Elo Chess.com</div>
     <div class="figure">
-      <div class="num">627</div>
-      <div class="delta">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg>
-        +12
-      </div>
+      <div class="num" id="elo-num">—</div>
+      <div class="delta" id="elo-delta" hidden></div>
     </div>
     <p class="hcap">Répertoire d'ouvertures, points d'amélioration et journal de parties — synchronisés sur tous tes appareils.</p>
+    <div class="elo-sync" id="elo-sync">Synchronisation avec Chess.com…</div>
   </section>
 
   <div id="sync-banner" class="sync-banner"></div>
 
   <div class="tabs">
-    <button class="tab active" data-tab="rep">Ouvertures</button>
+    <button class="tab active" data-tab="journal">Journal</button>
     <button class="tab" data-tab="fc">Flashcards</button>
-    <button class="tab" data-tab="journal">Journal</button>
+    <button class="tab" data-tab="rep">Ouvertures</button>
   </div>
 
   <!-- REPERTOIRE -->
-  <div class="panel active" id="panel-rep">
+  <div class="panel" id="panel-rep">
 
     <div class="rep-card">
       <div class="rep-head">
@@ -344,7 +344,7 @@
   </div>
 
   <!-- JOURNAL DE PARTIES -->
-  <div class="panel" id="panel-journal">
+  <div class="panel active" id="panel-journal">
 
     <div class="game-form">
       <h2>Ajouter une partie</h2>
@@ -681,20 +681,12 @@
         <button class="nav-btn" id="replay-next">Coup suivant →</button>
       </div>
       ${game.note ? `<div class="game-note">${game.note}</div>` : ''}
-      <button class="delete-link" id="delete-game">Supprimer cette partie</button>
     `;
     viewer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
     document.getElementById('close-viewer').addEventListener('click', () => {
       viewer.style.display = 'none';
       viewer.innerHTML = '';
-    });
-    document.getElementById('delete-game').addEventListener('click', async () => {
-      if(confirm('Supprimer définitivement cette partie du journal ?')){
-        if(sb) await sb.from('games').delete().eq('id', game.id);
-        viewer.style.display = 'none';
-        refreshGames();
-      }
     });
 
     let history = [];
@@ -825,13 +817,109 @@
     msg.classList.add('ok');
     document.getElementById('in-pgn').value = '';
     refreshGames();
+    syncElo();
   });
+
+  /* ==========================================================
+     SYNCHRO ELO — Chess.com (fi0riture)
+     Live au chargement + à chaque partie ajoutée (API publique),
+     avec repli sur assets/elo.json (mis à jour chaque jour par
+     GitHub Actions, même quand la page est fermée).
+     ========================================================== */
+  var ELO_USER = 'fi0riture';
+  var ELO_KEY = 'elo_fi0riture';
+  var ELO_FMT_LABEL = { rapid:'Rapide', blitz:'Blitz', bullet:'Bullet', daily:'Par jour' };
+
+  function eloAgo(ts){
+    if(!ts) return '';
+    var sec = Math.floor((Date.now()-ts)/1000);
+    if(sec < 60) return "à l'instant";
+    var m = Math.floor(sec/60); if(m < 60) return 'il y a ' + m + ' min';
+    var h = Math.floor(m/60); if(h < 24) return 'il y a ' + h + ' h';
+    return 'il y a ' + Math.floor(h/24) + ' j';
+  }
+
+  function renderElo(rating, fmt, delta, ts){
+    var numEl = document.getElementById('elo-num');
+    if(numEl && rating) numEl.textContent = String(rating);
+    var d = document.getElementById('elo-delta');
+    if(d){
+      if(typeof delta === 'number' && delta !== 0){
+        var up = delta > 0;
+        var path = up ? 'M7 17 17 7M9 7h8v8' : 'M7 7 17 17M17 9v8h-8';
+        d.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="' + path + '"/></svg>' + (up ? '+' : '−') + Math.abs(delta);
+        d.className = 'delta ' + (up ? 'win' : 'loss');
+        d.hidden = false;
+      } else {
+        d.hidden = true;
+      }
+    }
+    var sync = document.getElementById('elo-sync');
+    if(sync){
+      var parts = [];
+      if(fmt) parts.push(ELO_FMT_LABEL[fmt] || fmt);
+      parts.push('via Chess.com');
+      if(ts) parts.push('synchronisé ' + eloAgo(ts));
+      sync.textContent = parts.join(' · ');
+    }
+  }
+
+  function loadEloCache(){
+    try{ return JSON.parse(localStorage.getItem(ELO_KEY) || 'null'); }catch(e){ return null; }
+  }
+  function saveEloCache(o){ try{ localStorage.setItem(ELO_KEY, JSON.stringify(o)); }catch(e){} }
+
+  async function fetchLiveElo(){
+    try{
+      var r = await fetch('https://api.chess.com/pub/player/' + ELO_USER + '/stats', { cache:'no-store' });
+      if(!r.ok) return null;
+      var j = await r.json();
+      var order = [['chess_rapid','rapid'],['chess_blitz','blitz'],['chess_bullet','bullet'],['chess_daily','daily']];
+      for(var i=0;i<order.length;i++){
+        var node = j[order[i][0]];
+        if(node && node.last && node.last.rating) return { rating: node.last.rating, format: order[i][1] };
+      }
+    }catch(e){}
+    return null;
+  }
+
+  async function fetchFileElo(){
+    try{
+      var r = await fetch('assets/elo.json?ts=' + Date.now(), { cache:'no-store' });
+      if(!r.ok) return null;
+      var j = await r.json();
+      if(j && j.rating) return { rating: j.rating, format: j.format };
+    }catch(e){}
+    return null;
+  }
+
+  async function syncElo(){
+    var cache = loadEloCache();
+    if(cache && cache.rating) renderElo(cache.rating, cache.format, undefined, cache.ts);
+    var live = await fetchLiveElo();
+    if(!live) live = await fetchFileElo();
+    if(!live){
+      var numEl = document.getElementById('elo-num');
+      var sync = document.getElementById('elo-sync');
+      if(!cache || !cache.rating){
+        if(numEl) numEl.textContent = '—';
+        if(sync) sync.textContent = "Elo indisponible pour l'instant";
+      }
+      return;
+    }
+    var prev = (cache && cache.rating) ? cache.rating : null;
+    var delta = (prev != null) ? (live.rating - prev) : undefined;
+    var ts = Date.now();
+    renderElo(live.rating, live.format, delta, ts);
+    saveEloCache({ rating: live.rating, format: live.format, ts: ts });
+  }
 
   /* ---------- Initialisation ---------- */
   (async function init(){
     masteredMap = await loadMasteredMap();
     renderCard();
     await refreshGames();
+    syncElo();
   })();
 </script>
 </body>
