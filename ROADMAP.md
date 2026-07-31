@@ -9,7 +9,10 @@
 - [ ] **2. Analyse automatique à l'ajout** — dès qu'un PGN est ajouté, afficher l'analyse du coach et ses recommandations pour progresser.
 - [ ] **3. Flashcards générées depuis la partie** — créer automatiquement de nouvelles flashcards à partir des erreurs / thèmes de la partie ajoutée.
 - [ ] **4. Redirection vers les nouvelles flashcards** — après l'ajout et la génération, rediriger vers les flashcards nouvellement créées.
-- [ ] **5. Vérification automatique de l'Elo** — automatisation qui va chercher / vérifie l'Elo sur Chess.com.
+
+## Fait
+
+- [x] **5. Vérification automatique de l'Elo** — synchro depuis Chess.com (`fi0riture`) : live dans le navigateur au chargement et à chaque partie ajoutée (API publique), plus un GitHub Action quotidien (`.github/workflows/sync-elo.yml`) qui met `assets/elo.json` à jour côté serveur — garantit la mise à jour au moins une fois par jour même page fermée. _(Fait le 31/07/2026.)_
 
 ---
-_Tenu à jour par le coach. Aucune de ces features n'est développée tant que le propriétaire ne l'a pas explicitement demandé._
+_Tenu à jour par le coach. Aucune des features restantes n'est développée tant que le propriétaire ne l'a pas explicitement demandé._
