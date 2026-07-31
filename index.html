@@ -219,6 +219,18 @@
   .res-badge.draw{color:var(--muted);}
   .empty-note{color:var(--muted);font-size:13px;font-style:italic;}
 
+  /* --- Analyse du coach --- */
+  .coach{background:var(--glass);border:1px solid var(--line);border-radius:var(--r-md);padding:18px 20px;-webkit-backdrop-filter:blur(18px) saturate(1.2);backdrop-filter:blur(18px) saturate(1.2);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 22px 44px -26px rgba(0,0,0,.85);}
+  .coach.coach-in-viewer{margin-top:14px;padding:16px 18px;background:rgba(255,255,255,.03);box-shadow:none;}
+  .coach.coach-in-viewer:empty{display:none;}
+  .coach h4{margin:0 0 12px;font-size:13px;font-weight:650;letter-spacing:.01em;}
+  .coach-list{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px;}
+  .coach-list li{font-size:13px;line-height:1.55;color:#cacdd4;}
+  .coach-foot{margin:13px 0 0;font-family:var(--mono);font-size:10.5px;color:var(--faint);letter-spacing:.02em;line-height:1.5;}
+  .coach-new{margin-top:14px;padding-top:13px;border-top:1px solid var(--line);font-size:12.5px;line-height:1.5;color:var(--win);}
+  .coach-link{background:none;border:0;color:var(--ink);font-family:var(--sans);font-size:12.5px;font-weight:600;cursor:pointer;text-decoration:underline;text-underline-offset:3px;padding:0;}
+  .coach-link:hover{color:var(--muted);}
+
   /* --- Visionneuse --- */
   .viewer{
     background:var(--glass);border:1px solid var(--line);border-radius:var(--r-lg);padding:20px;margin-top:4px;
@@ -258,9 +270,6 @@
       <b>Salut, fi0riture</b>
     </div>
     <div class="hbtns">
-      <button class="icon-btn" aria-label="Notifications">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-      </button>
       <button class="icon-btn" aria-label="Menu">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
       </button>
@@ -359,6 +368,8 @@
       <div class="form-msg" id="form-msg"></div>
     </div>
 
+    <div id="coach-analysis" class="coach" style="display:none;"></div>
+
     <div id="game-list" class="game-list">
       <p class="empty-note">Chargement...</p>
     </div>
@@ -414,7 +425,7 @@
   /* ==========================================================
      FLASHCARDS
      ========================================================== */
-  const cards = [
+  const BASE_CARDS = [
     {
       tag: "Calcul — prises",
       q: "Ton adversaire vient de prendre une pièce. Quel est ton réflexe avant de jouer ton propre plan ?",
@@ -469,6 +480,16 @@
       square: "f2"
     }
   ];
+
+  /* Flashcards générées automatiquement depuis les parties (persistées en local) */
+  var GEN_CARDS_KEY = 'generated_cards_v1';
+  function loadGeneratedCards(){
+    try{ var a = JSON.parse(localStorage.getItem(GEN_CARDS_KEY) || '[]'); return Array.isArray(a) ? a : []; }catch(e){ return []; }
+  }
+  function saveGeneratedCards(a){ try{ localStorage.setItem(GEN_CARDS_KEY, JSON.stringify(a)); }catch(e){} }
+  function cardSig(c){ return (c.tag + '|' + c.q).toLowerCase().replace(/\s+/g,' ').trim(); }
+
+  var cards = BASE_CARDS.concat(loadGeneratedCards());
 
   let idx = 0;
   let flipped = false;
@@ -681,6 +702,7 @@
         <button class="nav-btn" id="replay-next">Coup suivant →</button>
       </div>
       ${game.note ? `<div class="game-note">${game.note}</div>` : ''}
+      <div id="viewer-analysis" class="coach coach-in-viewer"></div>
     `;
     viewer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
@@ -724,6 +746,12 @@
       step = Math.min(history.length, step + 1);
       renderStep();
     });
+
+    var va = document.getElementById('viewer-analysis');
+    if(va){
+      var an = analyzeGame(game.pgn, { opponent: game.opponent, played_on: game.played_on, result: game.result });
+      va.innerHTML = an ? analysisHtml(an, 0, true) : '';
+    }
   }
 
   async function refreshGames(){
@@ -818,7 +846,133 @@
     document.getElementById('in-pgn').value = '';
     refreshGames();
     syncElo();
+    reviewAndRender(pgn, { opponent: opponent, played_on: played_on, result: result });
   });
+
+  /* ==========================================================
+     ANALYSE AUTOMATIQUE + FLASHCARDS (heuristique, sans moteur)
+     Bilan factuel de la partie (matériel net, sécurité du roi,
+     issue) et génération de flashcards ancrées sur la partie.
+     ========================================================== */
+  function pieceValue(t){ return ({p:1,n:3,b:3,r:5,q:9,k:0})[t] || 0; }
+
+  function sideMaterial(chess, color){
+    var b = chess.board(), s = 0;
+    for(var r=0;r<8;r++){ for(var c=0;c<8;c++){ var p=b[r][c]; if(p && p.color===color) s += pieceValue(p.type); } }
+    return s;
+  }
+
+  function analyzeGame(pgn, meta){
+    var g = new Chess();
+    try{ if(!g.load_pgn(pgn)) return null; }catch(e){ return null; }
+    var h = g.header();
+    var white = (h.White||'').toLowerCase();
+    var mine = MY_USERNAMES.map(function(u){ return u.toLowerCase(); });
+    var myColor = mine.indexOf(white) >= 0 ? 'w' : 'b';
+    var oppColor = myColor === 'w' ? 'b' : 'w';
+    var moves = g.history({ verbose:true });
+    if(!moves.length) return null;
+
+    var replay = new Chess();
+    var samples = [];           // matériel en fin de coup complet (les échanges s'annulent)
+    var maxQ = 0, curQ = 0, checks = 0, castledAt = null;
+
+    for(var i=0;i<moves.length;i++){
+      var mv = moves[i];
+      replay.move(mv.san);
+      var moveNo = Math.floor(i/2) + 1;
+      if(mv.color===myColor && castledAt===null && (mv.flags.indexOf('k')>=0 || mv.flags.indexOf('q')>=0)) castledAt = moveNo;
+      if(mv.color===oppColor && /[+#]/.test(mv.san)) checks++;
+
+      var b = replay.board(), king=null, queens=[];
+      for(var r=0;r<8;r++){ for(var c=0;c<8;c++){ var p=b[r][c]; if(!p) continue; if(p.type==='k'&&p.color===myColor) king={r:r,c:c}; if(p.type==='q'&&p.color===oppColor) queens.push({r:r,c:c}); } }
+      var near = false;
+      if(king){ for(var q=0;q<queens.length;q++){ if(Math.max(Math.abs(queens[q].r-king.r),Math.abs(queens[q].c-king.c))<=2){ near=true; break; } } }
+      if(near){ curQ++; if(curQ>maxQ) maxQ=curQ; } else curQ=0;
+
+      if((i % 2 === 1) || (i === moves.length-1)){
+        samples.push({ moveNo:moveNo, diff: sideMaterial(replay,myColor) - sideMaterial(replay,oppColor), san: mv.san });
+      }
+    }
+
+    var biggest = { amount:0, moveNo:0, san:'' };
+    for(var s=1;s<samples.length;s++){
+      var drop = samples[s-1].diff - samples[s].diff;
+      if(drop > biggest.amount) biggest = { amount:drop, moveNo:samples[s].moveNo, san:samples[s].san };
+    }
+
+    var result = h.Result || '';
+    var last = moves[moves.length-1];
+    var lastMoveNo = Math.floor((moves.length-1)/2) + 1;
+    var mated = /#/.test(last.san);
+    var iGotMated = mated && last.color===oppColor;
+    var iMated = mated && last.color===myColor;
+    var iLost = (result==='1-0'&&myColor==='b') || (result==='0-1'&&myColor==='w') || (!result && iGotMated);
+    var iWon  = (result==='1-0'&&myColor==='w') || (result==='0-1'&&myColor==='b') || (!result && iMated);
+
+    var sideLabel = myColor==='w' ? 'les Blancs' : 'les Noirs';
+    var obs = [];
+    if(iWon) obs.push('Tu jouais ' + sideLabel + ' et tu as gagné' + (iMated ? ' par échec et mat au coup ' + lastMoveNo + '.' : '.'));
+    else if(iLost) obs.push('Tu jouais ' + sideLabel + ' et tu as perdu' + (iGotMated ? ', maté au coup ' + lastMoveNo + ' (' + last.san + ').' : '.'));
+    else obs.push('Tu jouais ' + sideLabel + '.');
+
+    if(castledAt!==null) obs.push('Roque effectué au coup ' + castledAt + '.');
+    else if(moves.length >= 16) obs.push("Tu n'as jamais roqué : ton roi est resté au centre — souvent risqué dès que le jeu s'ouvre.");
+
+    if(biggest.amount >= 2) obs.push('Plus gros recul matériel net : environ −' + biggest.amount + ' autour du coup ' + biggest.moveNo + ' (' + biggest.san + '). À revoir : une pièce laissée en prise, ou une reprise oubliée ?');
+    if(maxQ >= 3) obs.push("La dame adverse est restée à deux cases de ton roi pendant " + maxQ + " demi-coups — un signal d'alarme à traiter en priorité.");
+    if(checks >= 4) obs.push("Ton roi a encaissé " + checks + " échecs sur la partie — souvent le signe d'un roi trop exposé.");
+
+    var src = 'Partie' + (meta && meta.played_on ? ' du ' + meta.played_on : '') + (meta && meta.opponent ? ' vs ' + meta.opponent : '') + '.';
+    var cand = [];
+    if(biggest.amount >= 2) cand.push({ tag:'Sécurité du matériel', q:"Après le coup de ton adversaire, quel contrôle réflexe fais-tu avant de jouer ton plan ?", a:"Vérifie les prises : qu'est-ce qui est en prise (chez toi comme chez lui) et dois-tu reprendre ? C'est le contrôle le plus souvent oublié.", source: src + ' Plus gros recul matériel autour du coup ' + biggest.moveNo + '.' });
+    if(maxQ >= 3) cand.push({ tag:'Roi en danger', q:"La dame adverse s'installe à deux cases de ton roi et y reste. Que fais-tu avant de poursuivre ton plan ?", a:"Traite-la comme une urgence : chasse-la avec un coup de tempo, ou renforce la défense du roi. Continuer ailleurs est presque toujours une erreur.", source: src });
+    if(castledAt===null && moves.length >= 16 && (iLost || maxQ>=3 || checks>=4)) cand.push({ tag:'Sécurité du roi', q:"Le jeu s'ouvre et ton roi est encore au centre. Quelle est ta priorité ?", a:"Mets ton roi à l'abri (roque) avant de lancer une action — un roi au centre est une cible.", source: src + ' Roi resté au centre.' });
+
+    return { observations: obs, cards: cand, iLost: iLost, iWon: iWon };
+  }
+
+  function ingestCards(cand){
+    if(!cand || !cand.length) return 0;
+    var seen = {}; cards.forEach(function(c){ seen[cardSig(c)] = true; });
+    var gen = loadGeneratedCards(), added = 0;
+    cand.forEach(function(c){
+      var sig = cardSig(c);
+      if(seen[sig]) return;
+      seen[sig] = true; gen.push(c); cards.push(c); added++;
+    });
+    if(added){
+      saveGeneratedCards(gen);
+      renderMasteredCount();
+      var counter = document.getElementById('fc-counter');
+      if(counter) counter.textContent = 'Carte ' + (idx+1) + ' / ' + cards.length;
+    }
+    return added;
+  }
+
+  function escapeHtml(s){ return String(s).replace(/[&<>"]/g, function(ch){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[ch]; }); }
+
+  function analysisHtml(a, added, inViewer){
+    var lis = a.observations.map(function(o){ return '<li>' + escapeHtml(o) + '</li>'; }).join('');
+    var html = '<h4>Analyse du coach</h4><ul class="coach-list">' + lis + '</ul>';
+    html += '<p class="coach-foot">Bilan automatique basé sur le matériel et la sécurité du roi — un repère factuel, pas une évaluation de moteur.</p>';
+    if(!inViewer && added > 0){
+      html += '<div class="coach-new">' + added + ' nouvelle' + (added>1?'s':'') + ' flashcard' + (added>1?'s':'') + ' créée' + (added>1?'s':'') + ' à partir de cette partie. <button type="button" class="coach-link" data-goto-fc>Voir les flashcards →</button></div>';
+    }
+    return html;
+  }
+
+  function reviewAndRender(pgn, meta){
+    var box = document.getElementById('coach-analysis');
+    if(!box) return;
+    var a = analyzeGame(pgn, meta);
+    if(!a){ box.style.display = 'none'; box.innerHTML = ''; return; }
+    var added = ingestCards(a.cards);
+    box.innerHTML = analysisHtml(a, added, false);
+    box.style.display = 'block';
+    var btn = box.querySelector('[data-goto-fc]');
+    if(btn) btn.addEventListener('click', function(){ var t = document.querySelector('.tab[data-tab="fc"]'); if(t) t.click(); });
+  }
 
   /* ==========================================================
      SYNCHRO ELO — Chess.com (fi0riture)
