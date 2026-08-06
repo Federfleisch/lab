@@ -1,0 +1,64 @@
+name: Backup Supabase
+
+on:
+  schedule:
+    - cron: "40 5 * * *"   # tous les jours ~05:40 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: backup-supabase
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: "https://gbixgtxehqsuegcwkqxz.supabase.co"
+      SUPABASE_ANON_KEY: "sb_publishable_xxKGtzuznTgl7Go1A3hssA_9Alsv3ut"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Exporte les tables Supabase
+        run: |
+          set -euo pipefail
+          mkdir -p backups
+          dl () {
+            curl -sS --fail --retry 3 \
+              -H "apikey: ${SUPABASE_ANON_KEY}" \
+              -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+              "${SUPABASE_URL}/rest/v1/$1?select=*"
+          }
+          dl games > /tmp/games.json
+          dl flashcard_status > /tmp/cards.json
+          # garde-fou : on n'écrase le backup que si les réponses sont des tableaux JSON valides
+          head -c1 /tmp/games.json | grep -q '\[' || { echo "Réponse 'games' invalide — on garde le dernier backup."; exit 1; }
+          head -c1 /tmp/cards.json | grep -q '\[' || { echo "Réponse 'flashcard_status' invalide — on garde le dernier backup."; exit 1; }
+          node -e '
+            const fs = require("fs");
+            const games = JSON.parse(fs.readFileSync("/tmp/games.json","utf8"));
+            const cards = JSON.parse(fs.readFileSync("/tmp/cards.json","utf8"));
+            const out = {
+              generated_at: new Date().toISOString(),
+              counts: { games: games.length, flashcard_status: cards.length },
+              games: games,
+              flashcard_status: cards
+            };
+            fs.writeFileSync("backups/latest.json", JSON.stringify(out, null, 2) + "\n");
+            console.log("games=" + games.length + " flashcard_status=" + cards.length);
+          '
+
+      - name: Commit si changement
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- backups/latest.json; then
+            echo "Aucun changement depuis le dernier backup."
+            exit 0
+          fi
+          git config user.name "backup-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backups/latest.json
+          git commit -m "chore: backup Supabase ($(date -u +%F))"
+          git push
