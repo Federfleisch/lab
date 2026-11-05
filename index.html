@@ -231,6 +231,17 @@
   .coach-link{background:none;border:0;color:var(--ink);font-family:var(--sans);font-size:12.5px;font-weight:600;cursor:pointer;text-decoration:underline;text-underline-offset:3px;padding:0;}
   .coach-link:hover{color:var(--muted);}
 
+  /* --- Écrans compte (connexion / onboarding) --- */
+  .screen-gate{min-height:100vh;display:none;align-items:center;justify-content:center;padding:32px 20px;}
+  .gate-inner{width:100%;max-width:400px;}
+  .gate-title{font-size:clamp(30px,8vw,40px);font-weight:800;letter-spacing:-.03em;line-height:1.03;margin:10px 0 10px;text-wrap:balance;}
+  .gate-sub{color:var(--muted);font-size:14.5px;line-height:1.55;margin:0 0 26px;max-width:34ch;}
+  #auth-form,#onb-form{display:flex;flex-direction:column;gap:14px;}
+  .gate-inner .field{margin:0;}
+  .gate-inner .primary-btn{margin-top:6px;}
+  .link-toggle{display:block;margin:18px auto 0;background:none;border:0;color:var(--muted);font-family:var(--sans);font-size:13px;cursor:pointer;text-decoration:underline;text-underline-offset:3px;}
+  .link-toggle:hover{color:var(--ink);}
+
   /* --- Visionneuse --- */
   .viewer{
     background:var(--glass);border:1px solid var(--line);border-radius:var(--r-lg);padding:20px;margin-top:4px;
@@ -263,15 +274,62 @@
 </style>
 </head>
 <body>
-<div class="wrap">
+
+<div id="auth-screen" class="screen-gate" style="display:none;">
+  <div class="gate-inner">
+    <div class="eyebrow">Carnet d'échecs</div>
+    <h1 class="gate-title" id="auth-title">Crée ton compte</h1>
+    <p class="gate-sub" id="auth-sub">Suis ta progression et ton Elo Chess.com.</p>
+    <form id="auth-form" novalidate>
+      <div class="field">
+        <label for="auth-email">E-mail</label>
+        <input id="auth-email" type="email" autocomplete="email" placeholder="toi@exemple.com" required>
+      </div>
+      <div class="field">
+        <label for="auth-pass">Mot de passe</label>
+        <input id="auth-pass" type="password" autocomplete="new-password" minlength="6" placeholder="6 caractères minimum" required>
+      </div>
+      <button class="primary-btn" id="auth-submit" type="submit">Créer mon compte</button>
+    </form>
+    <div class="form-msg" id="auth-error"></div>
+    <button class="link-toggle" id="auth-toggle" type="button">Déjà un compte ? Se connecter</button>
+  </div>
+</div>
+
+<div id="onboarding" class="screen-gate" style="display:none;">
+  <div class="gate-inner">
+    <div class="eyebrow">Dernière étape</div>
+    <h1 class="gate-title">Ton profil Chess.com</h1>
+    <p class="gate-sub">Entre ton pseudo (ou l'URL de ton profil) et choisis le classement à afficher sur l'accueil.</p>
+    <form id="onb-form" novalidate>
+      <div class="field">
+        <label for="onb-user">Pseudo ou URL Chess.com</label>
+        <input id="onb-user" type="text" placeholder="fi0riture ou chess.com/member/fi0riture" required>
+      </div>
+      <div class="field">
+        <label for="onb-fmt">Classement affiché</label>
+        <select id="onb-fmt">
+          <option value="rapid">Rapide</option>
+          <option value="blitz">Blitz</option>
+          <option value="bullet">Bullet</option>
+        </select>
+      </div>
+      <button class="primary-btn" id="onb-submit" type="submit">Créer mon profil</button>
+    </form>
+    <div class="form-msg" id="onb-error"></div>
+    <button class="link-toggle" id="onb-signout" type="button">Se déconnecter</button>
+  </div>
+</div>
+
+<div class="wrap" id="app" style="display:none;">
 
   <header class="topbar">
     <div class="greet">
-      <b>Salut, fi0riture</b>
+      <b>Salut, <span id="greet-name">joueur</span></b>
     </div>
     <div class="hbtns">
-      <button class="icon-btn" aria-label="Menu">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
+      <button class="icon-btn" id="logout-btn" type="button" aria-label="Se déconnecter" title="Se déconnecter">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>
       </button>
     </div>
   </header>
@@ -497,8 +555,8 @@
   const cardEl = document.getElementById('card');
 
   async function loadMasteredMap(){
-    if(!sb) return {};
-    const { data, error } = await sb.from('flashcard_status').select('card_id, mastered');
+    if(!sb || !currentUser) return {};
+    const { data, error } = await sb.from('flashcard_status').select('card_id, mastered').eq('user_id', currentUser.id);
     const map = {};
     if(!error && data){ data.forEach(r => { map[r.card_id] = r.mastered; }); }
     return map;
@@ -508,8 +566,8 @@
 
   async function setMastered(i, val){
     masteredMap[i] = val;
-    if(!sb) return;
-    await sb.from('flashcard_status').upsert({ card_id: i, mastered: val, updated_at: new Date().toISOString() });
+    if(!sb || !currentUser) return;
+    await sb.from('flashcard_status').upsert({ user_id: currentUser.id, card_id: i, mastered: val, updated_at: new Date().toISOString() }, { onConflict: 'user_id,card_id' });
   }
 
   function renderMasteredCount(){
@@ -655,9 +713,10 @@
   }
 
   async function loadGames(){
-    if(!sb) return [];
+    if(!sb || !currentUser) return [];
     const { data, error } = await sb.from('games')
       .select('*')
+      .eq('user_id', currentUser.id)
       .order('played_on', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
     return error ? [] : (data || []);
@@ -760,7 +819,7 @@
   }
 
   /* Pseudos du titulaire du carnet tels qu'ils peuvent apparaître dans les PGN Chess.com */
-  const MY_USERNAMES = ['fi0riture', 'fioriture'];
+  var MY_USERNAMES = [];
 
   document.getElementById('add-game-btn').addEventListener('click', async () => {
     const msg = document.getElementById('form-msg');
@@ -832,7 +891,7 @@
     }
 
     const { error } = await sb.from('games').insert({
-      pgn, opponent, played_on, result
+      pgn, opponent, played_on, result, user_id: currentUser.id
     });
 
     if(error){
@@ -845,7 +904,7 @@
     msg.classList.add('ok');
     document.getElementById('in-pgn').value = '';
     refreshGames();
-    syncElo();
+    syncElo(profile && profile.chess_username, profile && profile.elo_format);
     reviewAndRender(pgn, { opponent: opponent, played_on: played_on, result: result });
   });
 
@@ -980,8 +1039,6 @@
      avec repli sur assets/elo.json (mis à jour chaque jour par
      GitHub Actions, même quand la page est fermée).
      ========================================================== */
-  var ELO_USER = 'fi0riture';
-  var ELO_KEY = 'elo_fi0riture';
   var ELO_FMT_LABEL = { rapid:'Rapide', blitz:'Blitz', bullet:'Bullet', daily:'Par jour' };
 
   function eloAgo(ts){
@@ -1018,21 +1075,26 @@
     }
   }
 
-  function loadEloCache(){
-    try{ return JSON.parse(localStorage.getItem(ELO_KEY) || 'null'); }catch(e){ return null; }
+  function eloKey(username){ return 'elo_' + String(username || '').toLowerCase(); }
+  function loadEloCache(key){
+    try{ return JSON.parse(localStorage.getItem(key) || 'null'); }catch(e){ return null; }
   }
-  function saveEloCache(o){ try{ localStorage.setItem(ELO_KEY, JSON.stringify(o)); }catch(e){} }
+  function saveEloCache(key, o){ try{ localStorage.setItem(key, JSON.stringify(o)); }catch(e){} }
+  function isOwnerUser(username){ var u = String(username || '').toLowerCase(); return u === 'fi0riture' || u === 'fioriture'; }
 
-  async function fetchLiveElo(){
+  async function fetchLiveElo(username, preferred){
     try{
-      var r = await fetch('https://api.chess.com/pub/player/' + ELO_USER + '/stats', { cache:'no-store' });
+      var r = await fetch('https://api.chess.com/pub/player/' + encodeURIComponent(String(username).toLowerCase()) + '/stats', { cache:'no-store' });
       if(!r.ok) return null;
       var j = await r.json();
       var order = [['chess_rapid','rapid'],['chess_blitz','blitz'],['chess_bullet','bullet'],['chess_daily','daily']];
+      var byFmt = {};
       for(var i=0;i<order.length;i++){
         var node = j[order[i][0]];
-        if(node && node.last && node.last.rating) return { rating: node.last.rating, format: order[i][1] };
+        if(node && node.last && node.last.rating) byFmt[order[i][1]] = node.last.rating;
       }
+      if(preferred && byFmt[preferred]) return { rating: byFmt[preferred], format: preferred };
+      for(var k=0;k<order.length;k++){ var f = order[k][1]; if(byFmt[f]) return { rating: byFmt[f], format: f }; }
     }catch(e){}
     return null;
   }
@@ -1047,11 +1109,17 @@
     return null;
   }
 
-  async function syncElo(){
-    var cache = loadEloCache();
+  async function syncElo(username, preferred){
+    if(!username){
+      var n0 = document.getElementById('elo-num'); if(n0) n0.textContent = '—';
+      var s0 = document.getElementById('elo-sync'); if(s0) s0.textContent = 'Aucun pseudo Chess.com';
+      return;
+    }
+    var key = eloKey(username);
+    var cache = loadEloCache(key);
     if(cache && cache.rating) renderElo(cache.rating, cache.format, undefined, cache.ts);
-    var live = await fetchLiveElo();
-    if(!live) live = await fetchFileElo();
+    var live = await fetchLiveElo(username, preferred);
+    if(!live && isOwnerUser(username)) live = await fetchFileElo();
     if(!live){
       var numEl = document.getElementById('elo-num');
       var sync = document.getElementById('elo-sync');
@@ -1065,16 +1133,157 @@
     var delta = (prev != null) ? (live.rating - prev) : undefined;
     var ts = Date.now();
     renderElo(live.rating, live.format, delta, ts);
-    saveEloCache({ rating: live.rating, format: live.format, ts: ts });
+    saveEloCache(key, { rating: live.rating, format: live.format, ts: ts });
   }
 
-  /* ---------- Initialisation ---------- */
-  (async function init(){
-    masteredMap = await loadMasteredMap();
-    renderCard();
-    await refreshGames();
-    syncElo();
+  /* ==========================================================
+     COMPTES (Supabase Auth) + AMORÇAGE
+     ========================================================== */
+  var currentUser = null;
+  var profile = null;
+  var startedForUser = null;
+  var authMode = 'signup';
+
+  function showScreen(name){
+    var map = { auth:'auth-screen', onboarding:'onboarding', app:'app' };
+    for(var k in map){
+      var el = document.getElementById(map[k]);
+      if(!el) continue;
+      el.style.display = (k === name) ? (k === 'app' ? 'block' : 'flex') : 'none';
+    }
+  }
+
+  function startApp(){
+    if(startedForUser === currentUser.id) return;
+    startedForUser = currentUser.id;
+    MY_USERNAMES = [ String(profile.chess_username || '').toLowerCase() ];
+    idx = 0;
+    masteredMap = {};
+    (async function(){
+      masteredMap = await loadMasteredMap();
+      renderCard();
+      await refreshGames();
+      syncElo(profile.chess_username, profile.elo_format);
+    })();
+  }
+
+  function applySession(session){
+    currentUser = (session && session.user) ? session.user : null;
+    if(!currentUser){ profile = null; showScreen('auth'); return; }
+    profile = currentUser.user_metadata || {};
+    if(!profile.chess_username){ showScreen('onboarding'); return; }
+    var gn = document.getElementById('greet-name');
+    if(gn) gn.textContent = profile.chess_username;
+    showScreen('app');
+    startApp();
+  }
+
+  /* ---- Connexion / inscription ---- */
+  function setAuthMode(m){
+    authMode = m;
+    var isSignup = m === 'signup';
+    document.getElementById('auth-title').textContent = isSignup ? 'Crée ton compte' : 'Content de te revoir';
+    document.getElementById('auth-sub').textContent = isSignup ? 'Suis ta progression et ton Elo Chess.com.' : 'Connecte-toi pour retrouver ton carnet.';
+    document.getElementById('auth-submit').textContent = isSignup ? 'Créer mon compte' : 'Se connecter';
+    document.getElementById('auth-toggle').textContent = isSignup ? 'Déjà un compte ? Se connecter' : 'Pas encore de compte ? En créer un';
+    document.getElementById('auth-pass').setAttribute('autocomplete', isSignup ? 'new-password' : 'current-password');
+    document.getElementById('auth-error').textContent = '';
+    document.getElementById('auth-error').className = 'form-msg';
+  }
+
+  function authErrMsg(e){
+    var m = (e && e.message) || '';
+    if(/invalid login credentials/i.test(m)) return 'E-mail ou mot de passe incorrect.';
+    if(/already registered|already been registered|user already/i.test(m)) return 'Un compte existe déjà avec cet e-mail — connecte-toi.';
+    if(/password should be at least/i.test(m)) return 'Mot de passe trop court (6 caractères minimum).';
+    if(/email/i.test(m) && /valid/i.test(m)) return 'Adresse e-mail invalide.';
+    return m || 'Une erreur est survenue. Réessaie.';
+  }
+
+  (function wireAuth(){
+    var toggle = document.getElementById('auth-toggle');
+    if(toggle) toggle.addEventListener('click', function(){ setAuthMode(authMode === 'signup' ? 'login' : 'signup'); });
+    var form = document.getElementById('auth-form');
+    if(form) form.addEventListener('submit', async function(e){
+      e.preventDefault();
+      var err = document.getElementById('auth-error'); err.className = 'form-msg'; err.textContent = '';
+      var email = document.getElementById('auth-email').value.trim();
+      var pass = document.getElementById('auth-pass').value;
+      var btn = document.getElementById('auth-submit'); btn.disabled = true;
+      try{
+        if(authMode === 'signup'){
+          var res = await sb.auth.signUp({ email: email, password: pass });
+          if(res.error){ err.classList.add('err'); err.textContent = authErrMsg(res.error); }
+          else if(!res.data.session){
+            err.classList.add('ok');
+            err.textContent = "Compte créé. Vérifie ta boîte mail pour confirmer, puis connecte-toi.";
+            setAuthMode('login');
+          }
+        } else {
+          var res2 = await sb.auth.signInWithPassword({ email: email, password: pass });
+          if(res2.error){ err.classList.add('err'); err.textContent = authErrMsg(res2.error); }
+        }
+      }catch(ex){ err.classList.add('err'); err.textContent = authErrMsg(ex); }
+      btn.disabled = false;
+    });
   })();
+
+  /* ---- Onboarding : pseudo Chess.com + format ---- */
+  function parseChessUser(str){
+    var v = String(str || '').trim();
+    var m = v.match(/chess\.com\/(?:member\/)?@?([A-Za-z0-9_\-]+)/i);
+    if(m) return m[1];
+    return v.replace(/^@/, '').replace(/\s+/g, '');
+  }
+
+  (function wireOnboarding(){
+    var out = document.getElementById('onb-signout');
+    if(out) out.addEventListener('click', function(){ if(sb) sb.auth.signOut(); });
+    var form = document.getElementById('onb-form');
+    if(form) form.addEventListener('submit', async function(e){
+      e.preventDefault();
+      var err = document.getElementById('onb-error'); err.className = 'form-msg'; err.textContent = '';
+      var name = parseChessUser(document.getElementById('onb-user').value);
+      var fmt = document.getElementById('onb-fmt').value;
+      if(!name){ err.classList.add('err'); err.textContent = 'Entre ton pseudo Chess.com.'; return; }
+      var btn = document.getElementById('onb-submit'); btn.disabled = true;
+      var known = true;
+      try{
+        var r = await fetch('https://api.chess.com/pub/player/' + encodeURIComponent(name.toLowerCase()), { cache:'no-store' });
+        if(r.status === 404) known = false;
+      }catch(_){ /* réseau/bloqueur : on ne bloque pas */ }
+      if(!known){ err.classList.add('err'); err.textContent = "Pseudo Chess.com introuvable — vérifie l'orthographe."; btn.disabled = false; return; }
+      try{
+        var up = await sb.auth.updateUser({ data: { chess_username: name, elo_format: fmt } });
+        if(up.error){ err.classList.add('err'); err.textContent = up.error.message || "Impossible d'enregistrer le profil."; btn.disabled = false; return; }
+        var sess = await sb.auth.getSession();
+        applySession(sess.data ? sess.data.session : null);
+      }catch(ex){ err.classList.add('err'); err.textContent = "Impossible d'enregistrer le profil. Réessaie."; }
+      btn.disabled = false;
+    });
+  })();
+
+  (function wireLogout(){
+    var b = document.getElementById('logout-btn');
+    if(b) b.addEventListener('click', function(){ if(sb) sb.auth.signOut(); });
+  })();
+
+  /* ---- Amorçage ---- */
+  (async function boot(){
+    setAuthMode('signup');
+    if(!sb){
+      showScreen('auth');
+      var ae = document.getElementById('auth-error');
+      if(ae){ ae.className = 'form-msg err'; ae.textContent = 'Connexion à la base indisponible (réseau ?). Recharge la page.'; }
+      return;
+    }
+    try{
+      var s = await sb.auth.getSession();
+      applySession(s.data ? s.data.session : null);
+    }catch(e){ showScreen('auth'); }
+    sb.auth.onAuthStateChange(function(_evt, session){ applySession(session); });
+  })();
+
 </script>
 </body>
 </html>
