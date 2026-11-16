@@ -18,6 +18,7 @@ jobs:
     env:
       SUPABASE_URL: "https://gbixgtxehqsuegcwkqxz.supabase.co"
       SUPABASE_ANON_KEY: "sb_publishable_xxKGtzuznTgl7Go1A3hssA_9Alsv3ut"
+      SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
     steps:
       - uses: actions/checkout@v4
 
@@ -25,10 +26,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p backups
+          # Après activation de RLS, la clé anon ne peut plus lire les tables :
+          # on utilise service_role si le secret est fourni, sinon repli sur anon.
+          KEY="${SUPABASE_SERVICE_ROLE:-$SUPABASE_ANON_KEY}"
           dl () {
             curl -sS --fail --retry 3 \
-              -H "apikey: ${SUPABASE_ANON_KEY}" \
-              -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+              -H "apikey: ${KEY}" \
+              -H "Authorization: Bearer ${KEY}" \
               "${SUPABASE_URL}/rest/v1/$1?select=*"
           }
           dl games > /tmp/games.json
